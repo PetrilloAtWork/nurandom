@@ -28,34 +28,23 @@ namespace rndm {
       /// @{
       /// @name Public data members
       
-      RunNumber_t    runNumber;     ///< run number
-      SubRunNumber_t subRunNumber;  ///< subrun number
-      EventNumber_t  eventNumber;   ///< event number
-      TimeValue_t    time;          ///< event time
+      RunNumber_t    runNumber = 0;    ///< run number
+      SubRunNumber_t subRunNumber = 0; ///< subrun number
+      EventNumber_t  eventNumber = 0;  ///< event number
+      TimeValue_t    time = 0;         ///< event time
       
-      bool           isData;        ///< whether processing real data
+      bool           isData = false;   ///< whether processing real data
       
       std::string processName;      ///< name of the running process
       std::string moduleType;       ///< name of the class of the running module
       std::string moduleLabel;      ///< label of the running module instance
       
-      bool isTimeValid;             ///< whether timestamp is valid
+      bool isTimeValid = false;        ///< whether timestamp is valid
       /// @}
       
       
       /// Resets all the fields
-      void clear()
-        {
-          runNumber = 0;
-          subRunNumber = 0;
-          eventNumber = 0;
-          time = 0;
-          isData = false;
-          processName.clear();
-          moduleType.clear();
-          moduleLabel.clear();
-          isTimeValid = false;
-        } // clear()
+      void clear() { *this = EventSeedInputData{}; }
       
     }; // class EventSeedInputData
   } // namespace NuRandomServiceHelper
