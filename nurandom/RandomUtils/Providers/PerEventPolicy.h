@@ -15,6 +15,7 @@
 // C/C++ standard libraries
 #include <string>
 #include <optional>
+#include <filesystem> // std::filesystem::path
 #include <memory> // std::unique_ptr<>
 #include <type_traits> // std::make_signed<>
 
@@ -76,6 +77,12 @@ namespace rndm {
      * before the first event.
      * 
      * 
+     * Configuration parameters
+     * -------------------------
+     * 
+     * See the documentation of `configure()`.
+     * 
+     * 
      * Special use cases
      * ==================
      * 
@@ -122,6 +129,75 @@ namespace rndm {
      *     
      * will recover the streams as in the original process `B`.
      * 
+     * 
+     * Modules extracting random numbers outside the event processing
+     * ---------------------------------------------------------------
+     * 
+     * `perEvent` policy can set random seeds on the start of each event, thus
+     * guaranteeing consistency of random stream within each event.
+     * To do that it builds the seed based on a context that includes event
+     * information, process name and module name.
+     * To regulate random number extraction outside the event processing, where
+     * such context can't be established, the `initSeedPolicy` complementary
+     * policy can be set. This has all the disadvantages of the policy that is
+     * chosen as the complementary, typically including the need of strict
+     * bookkeeping that almost offsets the gains from `perEvent` policy.
+     * 
+     * An example of this behaviour is the CORSIKA generator module, which
+     * (at the time of writing) randomly decides which database portion to use
+     * at construction time. At that point, only the `initSeedPolicy` is active.
+     * 
+     * Any mitigation requires the determination of a context which is unique
+     * for each job, and independent of event, and also of run and subrun if
+     * we want it to work before runs and subruns are available.
+     * Uniqueness is not trivial especially in generated samples, which often
+     * have run and event numbers repeated between samples and even within the
+     * same sample.
+     * 
+     * The following mitigation includes in the context the input file name.
+     * Therefore, only before the first event in a file, streams are initialized
+     * with seeds depending on the current file name. This approach can be
+     * enabled by configuring the policy with `algorithm: EventTimestamp_v2`.
+     * 
+     * Clearly there are a lot of limitations to this approach, and users need
+     * to understand them:
+     * 
+     * 1. The mitigation affects only the time from the opening of the input
+     *    file to the processing of the first event. At that time, all engines
+     *    are reseeded (the system does not have the concept of whether the
+     *    random stream is used in the event processing or outside it).
+     *    Because _art_ marks a run boundary when the input file changes,
+     *    the module calls that can take advantage of this mitigation are
+     *    `respondToOpenInputFile()`, `respondToOpenOutputFiles()`,
+     *    and the first `beginRun()` and `beginSubRun()` calls on each file.
+     * 2. Modules using random numbers in construction or `beginJob()` will
+     *    still suffer a problem. As a workaround, **modules may be need to be
+     *    redesigned** to do their thing in `respondToOpenInputFile()` instead.
+     *    Note however that:
+     *      * `beginRun()` and `beginSubRun()` are not ideal, because they can
+     *        happen also within the same file, in which case they will find
+     *        a random stream set up with the seed of the previous event.
+     *      * The code should react correctly to _all_
+     *        `respondToOpenInputFile()`, so that if there is a second input
+     *        file, seeds for processing the events it contains will be set
+     *        taking into account its name.
+     *    
+     *    Clearly this constrain may have unwanted consequences. For example,
+     *    in the case of CORSIKA, a new database file should be read for each
+     *    input file.
+     * 3. This mitigation may work only if there is an input file. Input systems
+     *    without a unique file name won't trigger it. Jobs with input files
+     *    from a database like SAM can work since the file names are unique in
+     *    the database. Generation events that get their input from `EmptyEvent`
+     *    will _not_ take advantage of this feature either. In this case, the
+     *    recommended approach is to introduce a preliminary stage (`Empty`)
+     *    that executes only `EmptyEvent` and `RootOutput`, and assigns a
+     *    timestamp to the events so that the regular `perEvent` policy can
+     *    work. The generation events will use such events as input: the events
+     *    and their files will provide all the context needed for reproducible
+     *    random streams.
+     * 4. Skipping input events is supported by this workaround.
+     * 
      */
     template <typename SEED>
     class PerEventPolicy: public RandomSeedPolicyBase<SEED> {
@@ -135,9 +211,10 @@ namespace rndm {
       
       typedef enum {
         saEventTimestamp_v1,             ///< event timestamp algorithm (v1)
+        saEventTimestamp_v2,             ///< event timestamp algorithm (v2)
         NAlgos,                          ///< total number of seed algorithms
         saUndefined,                     ///< algorithm not defined
-        saDefault = saEventTimestamp_v1  ///< default algorithm
+        saDefault = saEventTimestamp_v2  ///< default algorithm
       } SeedAlgo_t; ///< seed algorithms; see reseed() documentation for details
       
       /// Configures from a parameter set
@@ -154,8 +231,11 @@ namespace rndm {
        * @param pset the parameter set for the configuration
        * 
        * Parameters:
-       * - *algorithm* (string, default: "EventTimestamp_v1"): the name of the
-       *   algorithm to get the seed
+       * - *policy* (string): needs to be `perEvent`.
+       * - *algorithm* (string; default: `default`): the algorithm used to build
+       *   the seeds. The `default` value maps to `saDefault`.
+       *   The algorithms are described in `createEventSeed()`, and some usage
+       *   directions are in the `PerEventPolicy` class description.
        * - *offset* (integer, optional): if specified, all the final seeds are
        *   incremented by this value; the resulting seed is not checked, it
        *   might even be invalid. This is considered an emergency hack when
@@ -163,8 +243,12 @@ namespace rndm {
        *   to the event. This also defies the purpose of the policy, since after
        *   this, to reproduce the random sequences the additional knowledge of
        *   which offset was used is necessary.
+       * - *initSeedPolicy* (configuration table, optional): the configuration
+       *   of another random seed policy to be used outside of the event scope
+       *   (see class documentation for usage directions).
        * - *processName* (string, optional): if specified, the specified process
        *   name is used instead of the one from the current process.
+       * 
        */
       virtual void configure(fhicl::ParameterSet const& pset) override;
       
@@ -173,7 +257,7 @@ namespace rndm {
       
       
       /// Default algorithm version
-      static constexpr const char* DefaultVersion = "v1";
+      static constexpr const char* DefaultVersion = "v2";
       
       
       /// Converts some information into a valid seed by means of hash values
@@ -215,7 +299,12 @@ namespace rndm {
        * defined by the configuration. The following algorithms are supported:
        * - *EventTimestamp_v1*: includes event ID (run, subrun and event
        *   numbers), event timestamp, process name and engine ID into a hash
-       *   value, used for the seed
+       *   value, used for the seed.
+       * - *EventTimestamp_v2*: includes event ID and timestamp, like
+       *   `EventTimestamp_v1`, if the event ID is valid, otherwise it includes
+       *   the input file basename (which can be empty); and then process name
+       *   and engine ID. All into a hash value, used for the seed.
+       *   When event ID is available, it's equivalent to `EventTimestamp_v1`.
        */
       virtual seed_t createEventSeed
         (SeedMasterHelper::EngineId const& id, EventData_t const& info)
@@ -229,6 +318,13 @@ namespace rndm {
       static seed_t EventTimestamp_v1
         (SeedMasterHelper::EngineId const& id, EventData_t const& info);
       
+      /// Implementation of the EventTimestamp_v2 algorithm
+      static seed_t EventTimestamp_v2
+        (SeedMasterHelper::EngineId const& id, EventData_t const& info);
+      
+      /// Returns the name of the object pointed by the path.
+      static std::string basename(std::filesystem::path const& path)
+        { return path.filename(); }
       
       //@{
       /// Algorithm name (manual) handling
@@ -249,6 +345,7 @@ namespace rndm {
       std::vector<std::string> names((size_t) NAlgos);
       
       names[saEventTimestamp_v1] = "EventTimestamp_v1";
+      names[saEventTimestamp_v2] = "EventTimestamp_v2";
       
       return names;
     } // PerEventPolicy<SEED>::InitAlgoNames()
@@ -285,6 +382,8 @@ namespace rndm {
       (SeedMasterHelper::EngineId const& id, EventData_t const& info)
       -> seed_t
     {
+      // this version does not provide seeds without an actual event
+      if (!info.isEventValid()) return base_t::InvalidSeed;
       if (!info.isTimeValid) {
         throw art::Exception(art::errors::InvalidNumber)
           << "Input event has an invalid timestamp,"
@@ -296,9 +395,36 @@ namespace rndm {
       if (!id.instanceName.empty())
         s.append(" Instance: ").append(id.instanceName);
       seed_t seed = SeedFromHash(s);
-      MF_LOG_DEBUG("PerEventPolicy") << "Seed from: '" << s << "': " << seed;
+      MF_LOG_DEBUG("PerEventPolicy")
+        << "[EventTimestamp_v1] Seed from: '" << s << "': " << seed;
       return seed;
     } // PerEventPolicy<SEED>::EventTimestamp_v1()
+    
+    
+    template <typename SEED>
+    auto PerEventPolicy<SEED>::EventTimestamp_v2
+      (SeedMasterHelper::EngineId const& id, EventData_t const& info)
+      -> seed_t
+    {
+      if (info.isEventValid() && !info.isTimeValid) {
+        throw art::Exception(art::errors::InvalidNumber)
+          << "Input event has an invalid timestamp,"
+          " random seed per-event policy EventTimestamp_v2 can't be used.\n";
+      }
+      std::string s = (
+          info.isEventValid()
+          ? UniqueEventString(info)
+          : "Input: " + basename(info.inputFileName)
+        )
+        + " Process: " + info.processName
+        + " Module: " + id.moduleLabel;
+      if (!id.instanceName.empty())
+        s.append(" Instance: ").append(id.instanceName);
+      seed_t const seed = SeedFromHash(s);
+      MF_LOG_DEBUG("PerEventPolicy")
+        << "[EventTimestamp_v2] Seed from: '" << s << "': " << seed;
+      return seed;
+    } // PerEventPolicy<SEED>::EventTimestamp_v2()
     
     
     //--------------------------------------------------------------------------
@@ -329,7 +455,7 @@ namespace rndm {
         ? std::make_optional(pset.get<std::string>("processName"))
         : std::nullopt;
       
-      // EventTimestamp_v1 does not require specific configuration
+      // EventTimestamp_v1/2 does not require specific configuration
       
       
       // set the pre-event algorithm
@@ -359,6 +485,7 @@ namespace rndm {
         << "\n  algorithm version: " << algoNames[algo];
       if (offset != 0)
         out << "\n  constant offset:   " << offset;
+      out << "\n  process name:      " << processName.value_or("from the job");
       if (initSeedPolicy) {
         out << "\n  special policy for random seeds before the event: '"
           << policyName(initSeedPolicy.policy)
@@ -381,12 +508,19 @@ namespace rndm {
     typename PerEventPolicy<SEED>::seed_t PerEventPolicy<SEED>::createEventSeed
         (SeedMasterHelper::EngineId const& id, EventData_t const& info)
     {
+      // this function may be called from two different contexts: when an event
+      // is being processed, or when no event is processed but an input source
+      // has been open
       seed_t seed = base_t::InvalidSeed;
       EventData_t myInfo{ info };
       if (processName) myInfo.processName = *processName;
       switch (algo) {
         case saEventTimestamp_v1:
+          // if we are out of the event, this algo will fail and return invalid
           seed = EventTimestamp_v1(id, myInfo);
+          break;
+        case saEventTimestamp_v2:
+          seed = EventTimestamp_v2(id, myInfo);
           break;
         case saUndefined:
           throw art::Exception(art::errors::Configuration)
@@ -396,7 +530,8 @@ namespace rndm {
             << "Unsupported per-event random number seeder (#"
             << ((int) algo) << ")\n";
       } // switch
-      return seed + offset;
+      
+      return (seed == base_t::InvalidSeed)? seed: seed + offset;
     } // PerEventPolicy<SEED>::createEventSeed()
     
     

@@ -1276,6 +1276,8 @@ namespace rndm {
     // Call backs that will be called by art.
     void preModuleConstruction (art::ModuleDescription const& md);
     void postModuleConstruction(art::ModuleDescription const&);
+    void postOpenFile          (std::string const& inputFilePath);
+    void preModuleOpenFile     (art::ModuleDescription const& md);
     void preModuleBeginRun     (art::ModuleContext const& mc);
     void postModuleBeginRun    (art::ModuleContext const&);
     void preProcessEvent       (art::Event const& evt, art::ScheduleContext);

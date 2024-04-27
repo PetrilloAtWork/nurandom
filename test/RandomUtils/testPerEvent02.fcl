@@ -1,6 +1,6 @@
 # Test the seeds service.
 # 
-# Policy:       perEvent (algorithm "EventTimestamp_v1")
+# Policy:       perEvent (algorithm "EventTimestamp_v2")
 # Valid:        yes
 # Will succeed: yes
 # Purpose:      check normal operations
@@ -29,7 +29,7 @@ services: {
 
   NuRandomService: {
     policy            : "perEvent"
-    algorithm         : "EventTimestamp_v1"
+    algorithm         : "EventTimestamp_v2"
     verbosity         :     2
     endOfJobSummary   :  true
   } # NuRandomService

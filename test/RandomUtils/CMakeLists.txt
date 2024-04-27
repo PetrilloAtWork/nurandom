@@ -198,6 +198,7 @@ endforeach( ServiceTestName )
 # The second batch of tests is for NuRandomService ("integration" tests for art service only)
 set( SuccessfulServiceOnlyTests
   PerEvent01
+  PerEvent02
   ValidatedConfigLinear
   ValidatedConfigPerEvent
   )

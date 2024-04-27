@@ -354,6 +354,9 @@ namespace rndm {
     /// Prepares for a new event
     void onNewEvent();
     
+    /// Cleans after event completion
+    void afterEventCompletion();
+    
     /// Prints to the framework Info logger
     void print() const { print(mf::LogVerbatim("SEEDS")); }    
     
@@ -391,6 +394,7 @@ namespace rndm {
     /// the instance of the random policy
     std::unique_ptr<PolicyImpl_t> policy_impl;
     
+    void clearEventSeedCache();
     
     /// Returns a seed from the specified map, or InvalidSeed if not present
     static seed_t getSeedFromMap(map_type const& seeds, EngineId const& id)
@@ -672,9 +676,17 @@ typename rndm::SeedMaster<SEED>::seed_t rndm::SeedMaster<SEED>::getEventSeed
 //----------------------------------------------------------------------------
 template <typename SEED>
 inline void rndm::SeedMaster<SEED>::onNewEvent() {
-  // forget all we know about the current event
-  knownEventSeeds.clear();
+  // forget all we know about the previous event
+  clearEventSeedCache();
 } // SeedMaster<SEED>::onNewEvent()
+
+
+//----------------------------------------------------------------------------
+template <typename SEED>
+inline void rndm::SeedMaster<SEED>::afterEventCompletion() {
+  // forget all we know about the current event
+  clearEventSeedCache();
+} // SeedMaster<SEED>::afterEventCompletion()
 
 
 //----------------------------------------------------------------------------
@@ -705,6 +717,13 @@ void rndm::SeedMaster<SEED>::ensureUnique
     }
   } // for
 } // SeedMaster<SEED>::ensureUnique()
+
+
+//----------------------------------------------------------------------------
+template <typename SEED>
+inline void rndm::SeedMaster<SEED>::clearEventSeedCache() {
+  knownEventSeeds.clear();
+} // SeedMaster<SEED>::clearEventSeedCache()
 
 
 #endif // NURANDOM_RANDOMUTILS_PROVIDERS_SEEDMASTER_H

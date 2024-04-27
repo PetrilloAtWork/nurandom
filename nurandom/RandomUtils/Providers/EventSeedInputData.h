@@ -38,10 +38,13 @@ namespace rndm {
       std::string processName;      ///< name of the running process
       std::string moduleType;       ///< name of the class of the running module
       std::string moduleLabel;      ///< label of the running module instance
+      std::string inputFileName;    ///< name of the current input file, if any
       
       bool isTimeValid = false;        ///< whether timestamp is valid
       /// @}
       
+      /// Returns whether the event ID is valid (needs positive run and event).
+      bool isEventValid() const { return (runNumber > 0) && (eventNumber > 0); }
       
       /// Resets all the fields
       void clear() { *this = EventSeedInputData{}; }

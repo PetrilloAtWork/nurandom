@@ -28,6 +28,7 @@
 // C++ include files
 #include <iostream>
 #include <iomanip>
+#include <cassert>
 
 namespace rndm {
 
@@ -44,6 +45,8 @@ namespace rndm {
     // Register callbacks.
     iRegistry.sPreModuleConstruction.watch  (this, &NuRandomService::preModuleConstruction  );
     iRegistry.sPostModuleConstruction.watch (this, &NuRandomService::postModuleConstruction );
+    iRegistry.sPostOpenFile.watch           (this, &NuRandomService::postOpenFile           );
+    iRegistry.sPreModuleRespondToOpenInputFile.watch(this, &NuRandomService::preModuleOpenFile);
     iRegistry.sPreModuleBeginRun.watch      (this, &NuRandomService::preModuleBeginRun      );
     iRegistry.sPostModuleBeginRun.watch     (this, &NuRandomService::postModuleBeginRun     );
     iRegistry.sPreProcessEvent.watch        (this, &NuRandomService::preProcessEvent        );
@@ -335,6 +338,22 @@ namespace rndm {
     state.reset_state();
   } // NuRandomService::postModuleConstruction()
 
+  void NuRandomService::postOpenFile(std::string const& inputFilePath) {
+    state.transit_to(NuRandomServiceHelper::ArtState::postOpenInput);
+    state.set_input_file(inputFilePath);
+  } // NuRandomService::postOpenFile()
+  
+  void NuRandomService::preModuleOpenFile(art::ModuleDescription const& md) {
+    state.set_module(md);
+    assert(!state.eventID().isValid());
+
+    // Reseed all the engines of this module... maybe
+    // (that is, if the current policy allows it).
+    MF_LOG_DEBUG("NuRandomService") << "preModuleOpenFile(): will reseed engines for module '"
+      << md.moduleLabel() << "'";
+    reseedModule(md.moduleLabel());
+  } // NuRandomService::postOpenFile()
+  
   void NuRandomService::preModuleBeginRun(art::ModuleContext const& mc) {
     state.transit_to(NuRandomServiceHelper::ArtState::inModuleBeginRun);
     state.set_module(mc.moduleDescription());
@@ -359,7 +378,7 @@ namespace rndm {
     state.set_module(mc.moduleDescription());
 
     // Reseed all the engine of this module... maybe
-    // (that is, if the current policy alows it).
+    // (that is, if the current policy allows it).
     MF_LOG_DEBUG("NuRandomService") << "preModule(): will reseed engines for module '"
       << mc.moduleLabel() << "'";
     reseedModule(mc.moduleLabel());
@@ -371,6 +390,7 @@ namespace rndm {
   } // NuRandomService::postModule()
 
   void NuRandomService::postProcessEvent(art::Event const&, art::ScheduleContext) {
+    seeds.afterEventCompletion();
     state.reset_event();
     state.reset_state();
   } // NuRandomService::postProcessEvent()

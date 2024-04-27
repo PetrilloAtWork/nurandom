@@ -22,6 +22,7 @@
 
 // C/C++ standard libraries
 #include <string>
+#include <utility> // std::move()
 
 
 namespace rndm {
@@ -35,6 +36,7 @@ namespace rndm {
         unDefined,             ///< not assigned yet
         inServiceConstructor,  ///< in service construction phase
         inModuleConstructor,   ///< in module construction phase
+        postOpenInput,         ///< after input has been opened
         inBeginRun,            ///< in begin of run phase
         inModuleBeginRun,      ///< in begin of run for a module
         inEvent,               ///< in event phase
@@ -103,6 +105,9 @@ namespace rndm {
           procName = currentModuleDesc.processName();
         } // set_process_name()
       
+      void set_input_file(std::string inputFile)
+        { currentInputFile = std::move(inputFile); }
+      
       //@}
       
       
@@ -122,15 +127,19 @@ namespace rndm {
       std::string moduleLabel() const { return lastModule.moduleLabel(); }
       
       std::string processName() const { return procName; }
+      
+      std::string inputFile() const { return currentInputFile; }
       //@}
       
       
       EventSeedInputData getEventSeedInputData() const
         {
           EventSeedInputData data;
-          data.runNumber = eventID().run();
-          data.subRunNumber = eventID().subRun();
-          data.eventNumber = eventID().event();
+          if (eventID().isValid()) {
+            data.runNumber = eventID().run();
+            data.subRunNumber = eventID().subRun();
+            data.eventNumber = eventID().event();
+          }
           
           data.time = eventInfo().time().value();
           data.isTimeValid
@@ -141,6 +150,7 @@ namespace rndm {
           data.processName = processName();
           data.moduleType = moduleDesc().moduleName();
           data.moduleLabel = moduleLabel();
+          data.inputFileName = inputFile();
           
           return data;
         } // getEventSeedInputData()
@@ -152,6 +162,7 @@ namespace rndm {
             case unDefined:            return "(not assigned yet)";
             case inServiceConstructor: return "service construction";
             case inModuleConstructor:  return "module construction";
+            case postOpenInput:        return "after input opened";
             case inBeginRun:           return "begin of run";
             case inModuleBeginRun:     return "begin of run for module";
             case inEvent:              return "event preparation";
@@ -170,6 +181,7 @@ namespace rndm {
       EventInfo_t lastEvent;
       art::ModuleDescription lastModule;
       std::string procName;
+      std::string currentInputFile;
     }; // end ArtState
 
   } // end namespace NuRandomServiceHelper
