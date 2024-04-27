@@ -14,6 +14,7 @@
 
 // C/C++ standard libraries
 #include <string>
+#include <optional>
 #include <memory> // std::unique_ptr<>
 #include <type_traits> // std::make_signed<>
 
@@ -73,6 +74,54 @@ namespace rndm {
      * ~~~~
      * sets up the `perEvent` policy, and uses a `preDefinedSeed` for the seeds
      * before the first event.
+     * 
+     * 
+     * Special use cases
+     * ==================
+     * 
+     * The `perEvent` policy is expected to provide reliably reproducible random
+     * streams when extractions happen within the event processing (`produce()`,
+     * `filter()`, `analyze()`, etc.) and the job configuration is exactly the
+     * same.
+     * 
+     * Job configuration changes
+     * --------------------------
+     * 
+     * As long as the process name and the label of a module are not changed,
+     * the streams of that module are reproducible. Note however that if a new
+     * job has the module behaviour change, because of updated code or changed
+     * configuration, the same random sequence may end up used differently and
+     * still yield different results in the module and downstream of it.
+     * 
+     * 
+     * Process name changes
+     * ---------------------
+     * 
+     * A possible user pattern is for a workflow of processes `A`, `B` and `C`
+     * to take place, and its output saved by `RootOutput` module.
+     * Then, either for bug fix or for systematic variations, we may want to
+     * repeat `B` and then `C` on top of the result of `A`, and chances are that
+     * the only available sample is the output after `C` job.
+     * In that case, using `C` output files as `RootInput` input, dropping
+     * all `B` and `C` data products and running the same (or amended)
+     * configurations is not allowed by _art_ because process names `B` and `C`
+     * have already been seen. The solution of changing the name of the
+     * processes, e.g. into `Bfix1` and `Cfix1`, will allow processing, but then
+     * the random streams will be different from `B` and `C` because of the new
+     * process name.
+     * 
+     * To work around this issue it is possible to tell `perEvent` policy to use
+     * a given process name, instead of the one of the current process, to
+     * construct the seeds for the random streams. Specifying ad-hoc
+     * configurations like:
+     *     
+     *     #include "jobB.fcl"
+     *     
+     *     process_name: Bfix1
+     *     services.NuRandomService.processName: B
+     *     
+     * will recover the streams as in the original process `B`.
+     * 
      */
     template <typename SEED>
     class PerEventPolicy: public RandomSeedPolicyBase<SEED> {
@@ -114,6 +163,8 @@ namespace rndm {
        *   to the event. This also defies the purpose of the policy, since after
        *   this, to reproduce the random sequences the additional knowledge of
        *   which offset was used is necessary.
+       * - *processName* (string, optional): if specified, the specified process
+       *   name is used instead of the one from the current process.
        */
       virtual void configure(fhicl::ParameterSet const& pset) override;
       
@@ -145,6 +196,8 @@ namespace rndm {
       SeedAlgo_t algo; ///< the algorithm to extract the seed
       
       SeedOffset_t offset; ///< offset added to all the seeds
+      
+      std::optional<std::string> processName; ///< override process name
       
       /// Policy used for initialization before the event (none by default).
       PolicyStruct_t<seed_t> initSeedPolicy;
@@ -272,6 +325,10 @@ namespace rndm {
       // read an optional overall offset
       offset = pset.get<SeedOffset_t>("offset", 0);
       
+      processName = pset.has_key("processName")
+        ? std::make_optional(pset.get<std::string>("processName"))
+        : std::nullopt;
+      
       // EventTimestamp_v1 does not require specific configuration
       
       
@@ -325,9 +382,11 @@ namespace rndm {
         (SeedMasterHelper::EngineId const& id, EventData_t const& info)
     {
       seed_t seed = base_t::InvalidSeed;
+      EventData_t myInfo{ info };
+      if (processName) myInfo.processName = *processName;
       switch (algo) {
         case saEventTimestamp_v1:
-          seed = EventTimestamp_v1(id, info);
+          seed = EventTimestamp_v1(id, myInfo);
           break;
         case saUndefined:
           throw art::Exception(art::errors::Configuration)
